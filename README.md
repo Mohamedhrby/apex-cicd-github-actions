@@ -1,5 +1,7 @@
 # GitHub Actions deploy pipeline for APEX
 
+![License: MIT](https://img.shields.io/badge/License-MIT-informational) [![harby.dev](https://img.shields.io/badge/harby.dev-templates-C74634)](https://harby.dev/templates) ![GitHub Actions](https://img.shields.io/badge/CI-GitHub%20Actions-2088FF?logo=githubactions&logoColor=white) ![SQLcl](https://img.shields.io/badge/Oracle-SQLcl-F80000?logo=oracle&logoColor=white)
+
 A ready-to-use workflow that imports an **APEXLang** (file-based) APEX app into
 your database on **every push to `main`** — using SQLcl and encrypted secrets.
 Companion to [CI/CD for APEX with GitHub Actions](https://harby.dev/learn/ci-cd-apex-github-actions) on harby.dev.

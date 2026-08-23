@@ -1,0 +1,44 @@
+name: deploy-apex
+
+# Imports a file-based (APEXLang) APEX app into your database on every push to
+# main, using SQLcl. Database credentials come from encrypted repository secrets
+# — never from the repo. Set them under:
+#   Settings → Secrets and variables → Actions
+#     DB_URL   host:port/service     e.g. db.example.com:1521/FREEPDB1
+#     DB_USER  least-privilege deploy user (workspace parsing schema)
+#     DB_PWD   its password
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-apex
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java (required by SQLcl)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install SQLcl
+        run: |
+          curl -fL -o sqlcl.zip https://download.oracle.com/otn_software/java/sqldeveloper/sqlcl-latest.zip
+          unzip -q sqlcl.zip
+          echo "$PWD/sqlcl/bin" >> "$GITHUB_PATH"
+
+      - name: Deploy
+        env:
+          DB_URL: ${{ secrets.DB_URL }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PWD: ${{ secrets.DB_PWD }}
+        run: |
+          sql -L "$DB_USER/$DB_PWD@$DB_URL" @deploy.sql

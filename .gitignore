@@ -1,0 +1,13 @@
+# SQLcl / build artifacts
+sqlcl/
+sqlcl.zip
+
+# Never commit credentials
+login.sql
+*.wallet
+tnsnames.ora
+.env
+
+# OS noise
+.DS_Store
+Thumbs.db

@@ -1,17 +1,26 @@
 name: deploy-apex
 
-# Imports a file-based (APEXLang) APEX app into your database on every push to
-# main, using SQLcl. Database credentials come from encrypted repository secrets
-# — never from the repo. Set them under:
-#   Settings → Secrets and variables → Actions
-#     DB_URL   host:port/service     e.g. db.example.com:1521/FREEPDB1
-#     DB_USER  least-privilege deploy user (workspace parsing schema)
-#     DB_PWD   its password
+# Validates and imports an APEXlang (file-based) APEX app into your database on
+# every push to main that touches the app or the schema, using SQLcl.
+#
+# Requires APEX 26.1+ in the target database and SQLcl 26.1.2+ (the workflow
+# always downloads the latest SQLcl).
+#
+# Database credentials come from encrypted repository secrets, never the repo.
+# Set them under  Settings -> Secrets and variables -> Actions:
+#   DB_USER      the app's parsing schema (least privilege, not SYS/SYSTEM)
+#   DB_PASSWORD  its password
+#   DB_CONNECT   host:port/service   e.g. db.example.com:1521/FREEPDB1
+#
+# IMPORTANT: SQLcl exits 0 even when `apex validate` / `apex import` fail, so
+# each step saves SQLcl's output to a log and fails unless the log contains
+# the success line ("Validation successful." / "Import successful.").
 
 on:
   push:
     branches: [main]
-  workflow_dispatch: {}
+    paths: ["app/**", "database/**"]
+  workflow_dispatch:
 
 concurrency:
   group: deploy-apex
@@ -20,25 +29,59 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      # Folder created by:
+      #   apex export -applicationid 100 -exptype APEXLANG -skipexportdate -dir app -force
+      # SQLcl names it after the application alias, in lower case.
+      APP_DIR: app/my-app
+      APP_ID: "100"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Java (required by SQLcl)
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
-          distribution: temurin
-          java-version: "17"
+          distribution: oracle
+          java-version: "25"
 
       - name: Install SQLcl
         run: |
-          curl -fL -o sqlcl.zip https://download.oracle.com/otn_software/java/sqldeveloper/sqlcl-latest.zip
+          curl -fsSL -o sqlcl.zip https://download.oracle.com/otn_software/java/sqldeveloper/sqlcl-latest.zip
           unzip -q sqlcl.zip
-          echo "$PWD/sqlcl/bin" >> "$GITHUB_PATH"
+          ./sqlcl/bin/sql -V
 
-      - name: Deploy
-        env:
-          DB_URL: ${{ secrets.DB_URL }}
-          DB_USER: ${{ secrets.DB_USER }}
-          DB_PWD: ${{ secrets.DB_PWD }}
+      - name: Check the app folder exists
         run: |
-          sql -L "$DB_USER/$DB_PWD@$DB_URL" @deploy.sql
+          if [ ! -f "$APP_DIR/application.apx" ]; then
+            echo "::error::$APP_DIR/application.apx not found. Export the app with 'apex export -applicationid $APP_ID -exptype APEXLANG -skipexportdate -dir app -force' and set APP_DIR in this workflow."
+            exit 1
+          fi
+
+      - name: Validate APEXlang (offline, no database needed)
+        run: |
+          set -o pipefail
+          ./sqlcl/bin/sql -S /nolog <<EOF | tee validate.log
+          apex validate -input $APP_DIR
+          exit
+          EOF
+          grep -q "Validation successful." validate.log
+
+      - name: Apply schema changes and import app
+        env:
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_CONNECT: ${{ secrets.DB_CONNECT }}
+        run: |
+          set -o pipefail
+          # The password goes in on stdin (heredoc), never on the command line.
+          # Absolute app path: after @database/install.sql SQLcl resolves
+          # relative paths from database/, not from the repo root.
+          ./sqlcl/bin/sql -S /nolog <<EOF | tee import.log
+          connect $DB_USER/"$DB_PASSWORD"@$DB_CONNECT
+          whenever sqlerror exit failure rollback
+          set define off
+          @database/install.sql
+          apex import -input $PWD/$APP_DIR -id $APP_ID
+          exit
+          EOF
+          grep -q "Import successful." import.log
